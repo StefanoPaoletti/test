@@ -63,10 +63,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         
         return entities
     
-    # Create initial entities - ASYNC!
+    # Create initial entities - DIRECT ASYNC CALL!
     try:
-        # Use asyncio.to_thread for sync method
-        scenarios = await asyncio.to_thread(manager.scenario_manager.get_scenarios)
+        scenarios = await manager.scenario_manager.async_get_scenarios()  # ← FIX QUI!
         _LOGGER.info("Initial scenario setup: loaded %d scenarios", len(scenarios))
         entities = create_new_entities(scenarios)
         async_add_entities(entities)
@@ -80,8 +79,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         _LOGGER.debug("Received came_scenarios_refreshed event, checking for new scenarios...")
         
         try:
-            # ASYNC call
-            scenarios = await asyncio.to_thread(manager.scenario_manager.get_scenarios)
+            # DIRECT ASYNC CALL!
+            scenarios = await manager.scenario_manager.async_get_scenarios()  # ← FIX QUI!
             
             # Get existing and current IDs
             existing_ids = set(existing_scenario_entities.keys())
@@ -169,11 +168,8 @@ class CameScenarioEntity(Scene):
             scenario_id = self._scenario["id"]
             _LOGGER.info("🎬 Activating scenario id=%s (%s)", scenario_id, self._attr_name)
             
-            # ASYNC call
-            await asyncio.to_thread(
-                self._manager.scenario_manager.activate_scenario,
-                scenario_id
-            )
+            # DIRECT ASYNC CALL!
+            await self._manager.scenario_manager.async_activate_scenario(scenario_id)  # ← FIX QUI!
             
             self.async_write_ha_state()
             
