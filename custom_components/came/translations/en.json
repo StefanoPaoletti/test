@@ -1,0 +1,24 @@
+{
+    "config": {
+        "abort": {
+            "single_instance_allowed": "Only a single instance is allowed."
+        },
+        "step": {
+            "user": {
+                "title": "Came Connect",
+                "description": "Configure your CAME ETI/Domo device. For help visit: https://github.com/StefanoPaoletti/Came_Connect",
+                "data": {
+                    "host": "Host IP Address",
+                    "username": "Username (default: admin)",
+                    "password": "Password (default: admin)"
+                }
+            }
+        },
+        "error": {
+            "auth": "Authentication failed. Please check your Host IP, Username and Password.",
+            "cannot_connect": "Unable to connect to CAME device. Please check the Host IP and ensure the device is online.",
+            "timeout": "Connection timeout. Please check your network and try again.",
+            "unknown": "An unexpected error occurred. Please try again."
+        }
+    }
+}

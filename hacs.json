@@ -1,0 +1,10 @@
+{
+  "name": "Came Connect",
+  "domain": "came",
+  "documentation": "https://github.com/StefanoPaoletti/Came_Connect",
+  "codeowners": ["@StefanoPaoletti"],
+  "version": "2025.10.0",
+  "requirements": [],
+  "iot_class": "local_push",
+  "homeassistant": "2025.1.0"
+}

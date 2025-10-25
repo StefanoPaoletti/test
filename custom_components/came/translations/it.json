@@ -1,0 +1,24 @@
+{
+    "config": {
+        "abort": {
+            "single_instance_allowed": "È consentita una sola istanza alla volta."
+        },
+        "step": {
+            "user": {
+                "title": "Configura Came Connect",
+                "description": "Configura il tuo dispositivo CAME ETI/Domo. Per assistenza visita: https://github.com/StefanoPaoletti/Came_Connect",
+                "data": {
+                    "host": "Indirizzo IP del dispositivo",
+                    "username": "Nome utente (predefinito: admin)",
+                    "password": "Password (predefinito: admin)"
+                }
+            }
+        },
+        "error": {
+            "auth": "Autenticazione fallita. Verifica indirizzo IP, nome utente e password.",
+            "cannot_connect": "Impossibile connettersi al dispositivo CAME. Verifica l'indirizzo IP e che il dispositivo sia online.",
+            "timeout": "Timeout della connessione. Verifica la rete e riprova.",
+            "unknown": "Si è verificato un errore imprevisto. Riprova."
+        }
+    }
+}

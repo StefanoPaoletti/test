@@ -1,0 +1,48 @@
+# Describes the format for available CAME services
+# CAME Integration - Optimized Version
+# For more details: https://github.com/StefanoPaoletti/Came_Connect
+
+pull_devices:
+  name: Pull Devices
+  description: Force pull device list from CAME server. Use this to discover new devices added to your CAME system.
+  fields: {}
+
+force_update:
+  name: Force Update
+  description: Force all CAME devices to pull data and update their states immediately.
+  fields: {}
+
+refresh_scenarios:
+  name: Refresh Scenarios
+  description: Refresh the list of available scenarios from the CAME server. Use this after creating, deleting, or modifying scenarios.
+  fields: {}
+
+# Note: The following services may not be implemented yet
+# Uncomment and implement in __init__.py if needed
+
+# create_scenario:
+#   name: Create Scenario
+#   description: Create a new CAME scenario.
+#   fields:
+#     name:
+#       name: Name
+#       description: Name of the scenario to create.
+#       required: true
+#       example: "Movie Night"
+#       selector:
+#         text:
+
+# delete_scenario:
+#   name: Delete Scenario
+#   description: Delete an existing CAME scenario.
+#   fields:
+#     scenario_id:
+#       name: Scenario ID
+#       description: ID of the scenario to delete.
+#       required: true
+#       example: 5
+#       selector:
+#         number:
+#           min: 1
+#           max: 1000
+#           mode: box

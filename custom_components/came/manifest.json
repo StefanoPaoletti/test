@@ -1,0 +1,14 @@
+{
+  "domain": "came",
+  "name": "Came Connect",
+  "version": "2025.10.0",
+  "documentation": "https://github.com/StefanoPaoletti/Came_Connect",
+  "issue_tracker": "hhttps://github.com/StefanoPaoletti/Came_Connect/issues",
+  "dependencies": [],
+  "config_flow": true,
+  "codeowners": [
+    "@StefanoPaoletti"
+  ],
+  "requirements": [],
+  "iot_class": "local_polling"
+}
