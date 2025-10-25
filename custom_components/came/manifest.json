@@ -8,8 +8,7 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/StefanoPaoletti/Came_Connect/issues",
   "requirements": [
-    "aiohttp>=3.9.0",
     "cryptography>=44.0.2"
   ],
-  "version": "1.x.x"
+  "version": "1.0.0"
 }
