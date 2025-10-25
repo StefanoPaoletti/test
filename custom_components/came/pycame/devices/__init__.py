@@ -1,6 +1,5 @@
 """CAME ETI/Domo devices subpackage.
-
-Versione ottimizzata da Stefano Paoletti
+Versione ottimizzata ASYNC da Stefano Paoletti
 Based on original work by Danny Mauro (Den901)
 """
 import logging
@@ -19,8 +18,8 @@ from .came_scenarios import ScenarioDevice
 _LOGGER = logging.getLogger(__name__)
 
 
-def get_featured_devices(manager, feature: str) -> List[CameDevice]:
-    """Get device implementations for the given feature type.
+async def get_featured_devices(manager, feature: str) -> List[CameDevice]:
+    """Get device implementations for the given feature type - ASYNC.
     
     Args:
         manager: CameManager instance
@@ -58,14 +57,14 @@ def get_featured_devices(manager, feature: str) -> List[CameDevice]:
         _LOGGER.warning("Unsupported feature type: %s", feature)
         return devices
     
-    # Request device list from CAME device
+    # Request device list from CAME device - ASYNC!
     cmd = {
         "cmd_name": cmd_name,
         "topologic_scope": "plant",
     }
     
-    _LOGGER.debug("Requesting %s device list from CAME", feature)
-    response = manager.application_request(cmd, response_name)
+    _LOGGER.debug("⚡ ASYNC requesting %s device list from CAME", feature)
+    response = await manager.application_request(cmd, response_name)  # ← AGGIUNTO await!
     
     # Create device instances based on feature type
     device_count = 0
@@ -97,7 +96,7 @@ def get_featured_devices(manager, feature: str) -> List[CameDevice]:
                 device_count += 1
     
     _LOGGER.debug(
-        "Loaded %d device(s) for feature '%s'",
+        "✅ Loaded %d device(s) for feature '%s'",
         device_count,
         feature
     )
