@@ -1,14 +1,15 @@
 {
-  "domain": "came",
-  "name": "Came Connect",
-  "version": "2025.10.0",
-  "documentation": "https://github.com/StefanoPaoletti/Came_Connect",
-  "issue_tracker": "hhttps://github.com/StefanoPaoletti/Came_Connect/issues",
-  "dependencies": [],
+  "domain": "came_domotic",
+  "name": "CAME Domotic",
+  "codeowners": ["@your-github-username"],
   "config_flow": true,
-  "codeowners": [
-    "@StefanoPaoletti"
+  "documentation": "https://github.com/your-repo",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/your-repo/issues",
+  "requirements": [
+    "aiohttp==3.9.5",
+    "cryptography>=44.0.2"
   ],
-  "requirements": [],
-  "iot_class": "local_polling"
+  "version": "1.1.0"
 }
