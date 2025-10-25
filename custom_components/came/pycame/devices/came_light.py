@@ -1,7 +1,6 @@
-"""CAME ETI/Domo light device implementation.
+"""CAME ETI/Domo light device implementation - ASYNC VERSION.
 
-Versione ottimizzata da Stefano Paoletti
-Based on original work by Danny Mauro (Den901)
+Versione ottimizzata ASYNC da Stefano Paoletti
 """
 
 import colorsys
@@ -24,7 +23,7 @@ LIGHT_STATE_AUTO = 4
 
 
 class CameLight(CameDevice):
-    """CAME ETI/Domo light device class."""
+    """CAME ETI/Domo light device class with async support."""
 
     def __init__(self, manager, device_info: DeviceState):
         """Initialize CAME light device."""
@@ -58,8 +57,8 @@ class CameLight(CameDevice):
         """Return the HS color of the light."""
         return self._hsv_color[0:2]
 
-    def set_rgb_color(self, rgb: List[int]):
-        """Set RGB color of light (values 0-255)."""
+    async def async_set_rgb_color(self, rgb: List[int]):
+        """Set RGB color of light (values 0-255) - ASYNC."""
         if not self.support_color:
             _LOGGER.debug("Light %s does not support color", self.name)
             return
@@ -68,10 +67,10 @@ class CameLight(CameDevice):
         rgb = [max(0, min(255, val)) for val in rgb]
 
         _LOGGER.debug("Setting RGB color for %s: %s", self.name, rgb)
-        self.switch(rgb=rgb)
+        await self.async_switch(rgb=rgb)
 
-    def set_hs_color(self, hs: List[float]):
-        """Set HS color of light (H: 0-360, S: 0-100)."""
+    async def async_set_hs_color(self, hs: List[float]):
+        """Set HS color of light (H: 0-360, S: 0-100) - ASYNC."""
         if not self.support_color:
             _LOGGER.debug("Light %s does not support color", self.name)
             return
@@ -90,7 +89,34 @@ class CameLight(CameDevice):
                 )
             )
             _LOGGER.debug("Setting HS color for %s: HS=%s -> RGB=%s", self.name, hs, rgb)
-            self.switch(rgb=rgb)
+            await self.async_switch(rgb=rgb)
+
+    # Keep sync methods for backward compatibility
+    def set_rgb_color(self, rgb: List[int]):
+        """Sync wrapper for async_set_rgb_color."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If called from sync context in async loop, create task
+                asyncio.create_task(self.async_set_rgb_color(rgb))
+            else:
+                loop.run_until_complete(self.async_set_rgb_color(rgb))
+        except RuntimeError:
+            # No event loop, create new one
+            asyncio.run(self.async_set_rgb_color(rgb))
+
+    def set_hs_color(self, hs: List[float]):
+        """Sync wrapper for async_set_hs_color."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(self.async_set_hs_color(hs))
+            else:
+                loop.run_until_complete(self.async_set_hs_color(hs))
+        except RuntimeError:
+            asyncio.run(self.async_set_hs_color(hs))
 
     @property
     def support_brightness(self) -> bool:
@@ -105,8 +131,8 @@ class CameLight(CameDevice):
 
         return self._device_info.get("perc", 100)
 
-    def set_brightness(self, brightness: int):
-        """Set light brightness in percents (0-100)."""
+    async def async_set_brightness(self, brightness: int):
+        """Set light brightness in percents (0-100) - ASYNC."""
         if not self.support_brightness:
             _LOGGER.debug("Light %s does not support brightness", self.name)
             return
@@ -126,12 +152,24 @@ class CameLight(CameDevice):
                     ),
                 )
             )
-            self.switch(rgb=rgb)
+            await self.async_switch(rgb=rgb)
         else:
-            self.switch(brightness=brightness)
+            await self.async_switch(brightness=brightness)
 
-    def switch(self, state: int = None, brightness: int = None, rgb: List[int] = None):
-        """Switch light to new state."""
+    def set_brightness(self, brightness: int):
+        """Sync wrapper for async_set_brightness."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(self.async_set_brightness(brightness))
+            else:
+                loop.run_until_complete(self.async_set_brightness(brightness))
+        except RuntimeError:
+            asyncio.run(self.async_set_brightness(brightness))
+
+    async def async_switch(self, state: int = None, brightness: int = None, rgb: List[int] = None):
+        """Switch light to new state - ASYNC."""
         if state is None and brightness is None and rgb is None:
             raise ValueError("At least one parameter is required")
 
@@ -142,7 +180,7 @@ class CameLight(CameDevice):
             "act_id": self.act_id,
             "wanted_status": state if state is not None else self.state,
         }
-        
+
         log_params = {}
         if state is not None:
             log_params["status"] = cmd["wanted_status"]
@@ -151,24 +189,73 @@ class CameLight(CameDevice):
         if rgb is not None:
             log_params["rgb"] = cmd["rgb"] = rgb[0:3]
 
-        _LOGGER.debug("Setting new state for light '%s': %s", self.name, log_params)
+        _LOGGER.debug("⚡ ASYNC setting new state for light '%s': %s", self.name, log_params)
 
-        self._manager.application_request(cmd)
+        await self._manager.application_request(cmd)
 
+    def switch(self, state: int = None, brightness: int = None, rgb: List[int] = None):
+        """Sync wrapper for async_switch."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(self.async_switch(state, brightness, rgb))
+            else:
+                loop.run_until_complete(self.async_switch(state, brightness, rgb))
+        except RuntimeError:
+            asyncio.run(self.async_switch(state, brightness, rgb))
+
+    async def async_turn_off(self):
+        """Turn off light - ASYNC."""
+        _LOGGER.debug("⚡ ASYNC turning off light %s", self.name)
+        await self.async_switch(LIGHT_STATE_OFF)
+
+    async def async_turn_on(self):
+        """Turn on light - ASYNC."""
+        _LOGGER.debug("⚡ ASYNC turning on light %s", self.name)
+        await self.async_switch(LIGHT_STATE_ON)
+
+    async def async_turn_auto(self):
+        """Switch light to automatic mode - ASYNC."""
+        _LOGGER.debug("⚡ ASYNC switching light %s to AUTO mode", self.name)
+        await self.async_switch(LIGHT_STATE_AUTO)
+
+    # Sync methods for backward compatibility
     def turn_off(self):
-        """Turn off light."""
-        _LOGGER.debug("Turning off light %s", self.name)
-        self.switch(LIGHT_STATE_OFF)
+        """Sync wrapper for async_turn_off."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(self.async_turn_off())
+            else:
+                loop.run_until_complete(self.async_turn_off())
+        except RuntimeError:
+            asyncio.run(self.async_turn_off())
 
     def turn_on(self):
-        """Turn on light."""
-        _LOGGER.debug("Turning on light %s", self.name)
-        self.switch(LIGHT_STATE_ON)
+        """Sync wrapper for async_turn_on."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(self.async_turn_on())
+            else:
+                loop.run_until_complete(self.async_turn_on())
+        except RuntimeError:
+            asyncio.run(self.async_turn_on())
 
     def turn_auto(self):
-        """Switch light to automatic mode."""
-        _LOGGER.debug("Switching light %s to AUTO mode", self.name)
-        self.switch(LIGHT_STATE_AUTO)
+        """Sync wrapper for async_turn_auto."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(self.async_turn_auto())
+            else:
+                loop.run_until_complete(self.async_turn_auto())
+        except RuntimeError:
+            asyncio.run(self.async_turn_auto())
 
     def update(self):
         """Update device state from CAME device."""
