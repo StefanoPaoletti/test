@@ -3,6 +3,8 @@ The CAME Integration Component - Optimized by Stefano Paoletti
 
 Based on original work by Den901
 For more details: https://github.com/StefanoPaoletti/Came_Connect
+
+Security Enhanced: Credentials are now encrypted in memory using Fernet encryption
 """
 import asyncio
 import logging
@@ -28,7 +30,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.dispatcher import async_dispatcher_send, dispatcher_send
 
-from .pycame.came_manager import CameManager
+from .came_server import SecureCameManager  # ← MODIFICATO: era CameManager
 from .pycame.devices import CameDevice
 from .pycame.exceptions import ETIDomoConnectionError, ETIDomoConnectionTimeoutError
 from .pycame.devices.base import TYPE_ENERGY_SENSOR
@@ -44,7 +46,7 @@ from .const import (
     SIGNAL_DELETE_ENTITY,
     SIGNAL_DISCOVERY_NEW,
     SIGNAL_UPDATE_ENTITY,
-    STARTUP_MESSAGE,  # ← MODIFICATO: era get_startup_message
+    STARTUP_MESSAGE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,18 +67,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up this integration using UI."""
     # Print startup message
     if DOMAIN not in hass.data:
-        _LOGGER.info(STARTUP_MESSAGE)  # ← MODIFICATO: era get_startup_message()
+        _LOGGER.info(STARTUP_MESSAGE)
         hass.data[DOMAIN] = {}
 
     config = entry.data.copy()
     config.update(entry.options)
 
-    manager = CameManager(
+    # MODIFICATO: Usa SecureCameManager invece di CameManager
+    # Le credenziali vengono automaticamente cifrate in memoria
+    manager = SecureCameManager(
         config.get(CONF_HOST),
         config.get(CONF_USERNAME, "admin"),
         config.get(CONF_PASSWORD, "admin"),
         hass=hass
     )
+    _LOGGER.debug("Secure CAME manager initialized with encrypted credentials")
 
     def initial_update():
         manager.get_all_floors()
@@ -91,7 +96,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Crea evento di stop per thread e polling
     stop_event = threading.Event()
 
-    def _came_update_listener(hass: HomeAssistant, manager: CameManager, stop_event: threading.Event):
+    def _came_update_listener(hass: HomeAssistant, manager: SecureCameManager, stop_event: threading.Event):
         """Thread che ascolta gli aggiornamenti dei dispositivi in loop."""
         while not stop_event.is_set():
             try:
@@ -123,7 +128,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     thread.start()
 
-    async def async_energy_polling(hass: HomeAssistant, manager: CameManager, stop_event: threading.Event):
+    async def async_energy_polling(hass: HomeAssistant, manager: SecureCameManager, stop_event: threading.Event):
         """Polling async per i dati energia."""
         try:
             while not stop_event.is_set():
@@ -271,6 +276,16 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     )
     
     if unload_ok:
+        # AGGIUNTO: Cleanup delle credenziali cifrate PRIMA di rimuovere i servizi
+        manager = hass.data[DOMAIN].get(CONF_MANAGER)
+        if manager:
+            _LOGGER.debug("Securely clearing encrypted credentials from memory")
+            try:
+                manager.cleanup()
+                _LOGGER.info("Encrypted credentials cleared successfully")
+            except Exception as exc:
+                _LOGGER.error("Error clearing credentials: %s", exc)
+        
         hass.services.async_remove(DOMAIN, SERVICE_FORCE_UPDATE)
         hass.services.async_remove(DOMAIN, SERVICE_PULL_DEVICES)
         hass.services.async_remove(DOMAIN, "refresh_scenarios")
@@ -278,4 +293,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
         _LOGGER.info("CAME integration unloaded successfully")
     
     return unload_ok
-
