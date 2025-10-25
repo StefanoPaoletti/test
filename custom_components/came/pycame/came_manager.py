@@ -2,7 +2,7 @@
 
 Versione ottimizzata ASYNC da Stefano Paoletti
 Based on original work by Danny Mauro (Den901)
-Full async implementation using aiohttp
+Full async implementation using aiohttp with robust session management
 """
 
 import asyncio
@@ -66,12 +66,14 @@ class CameManager:
         self._rooms = None
         self._devices = None
         self._lock = asyncio.Lock()  # Thread-safe operations
+        self._login_in_progress = False  # Flag to prevent multiple logins
         self.scenario_manager = ScenarioManager(self)
 
     async def __aenter__(self):
         """Async context manager entry."""
         if self._session is None:
-            self._session = aiohttp.ClientSession()
+            timeout = aiohttp.ClientTimeout(total=10)
+            self._session = aiohttp.ClientSession(timeout=timeout)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -80,9 +82,10 @@ class CameManager:
 
     async def close(self):
         """Close the session if we own it."""
-        if self._own_session and self._session:
+        if self._own_session and self._session and not self._session.closed:
             await self._session.close()
             self._session = None
+            _LOGGER.debug("aiohttp session closed")
 
     @property
     def software_version(self) -> Optional[str]:
@@ -101,8 +104,9 @@ class CameManager:
 
     async def _request(self, command: dict, resp_command: str = None) -> dict:
         """Handle an async request to a CAME ETI/Domo device."""
-        if self._session is None:
-            self._session = aiohttp.ClientSession()
+        if self._session is None or self._session.closed:
+            timeout = aiohttp.ClientTimeout(total=10)
+            self._session = aiohttp.ClientSession(timeout=timeout)
 
         url = f"http://{self._host}/domo/"
         headers = {
@@ -119,7 +123,6 @@ class CameManager:
                 url,
                 data={"command": json.dumps(command)},
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=10)
             ) as response:
                 response.raise_for_status()
                 text = await response.text()
@@ -185,24 +188,40 @@ class CameManager:
         return self._client_id is not None and time.time() < self._session_expiration
 
     async def login(self) -> None:
-        """Async login function for access to CAME ETI/Domo."""
+        """Async login function with double-check locking pattern."""
+        # Fast path: check if session is valid without acquiring lock
+        if self._client_id and time.time() < self._session_expiration:
+            return
+
+        # Slow path: acquire lock and check again
         async with self._lock:
-            # Check if session is still valid
+            # Double-check: another coroutine might have logged in while we waited
             if self._client_id and time.time() < self._session_expiration:
-                _LOGGER.debug("Session still valid, skipping login")
+                _LOGGER.debug("Session valid after lock acquired, skipping login")
                 return
 
-            _LOGGER.debug("Attempting async login to CAME device")
-            response = await self._request(
-                {
-                    "sl_cmd": "sl_registration_req",
-                    "sl_login": self._username,
-                    "sl_pwd": self._password,
-                },
-                "sl_registration_ack",
-            )
+            # Prevent concurrent login attempts
+            if self._login_in_progress:
+                _LOGGER.warning("Login already in progress, waiting...")
+                # Wait a bit and check again
+                await asyncio.sleep(0.5)
+                if self._client_id and time.time() < self._session_expiration:
+                    return
+                raise ETIDomoError("Login timeout: another login is in progress")
 
+            self._login_in_progress = True
+            
             try:
+                _LOGGER.debug("🔑 Attempting async login to CAME device")
+                response = await self._request(
+                    {
+                        "sl_cmd": "sl_registration_req",
+                        "sl_login": self._username,
+                        "sl_pwd": self._password,
+                    },
+                    "sl_registration_ack",
+                )
+
                 if response["sl_client_id"]:
                     _LOGGER.info("✅ Successful async authorization to CAME device")
                     self._client_id = response.get("sl_client_id")
@@ -212,7 +231,7 @@ class CameManager:
                     self._session_expiration = time.time() + self._keep_alive_timeout - 30
 
                     _LOGGER.debug(
-                        "Session valid for %d seconds (until %s)",
+                        "Session valid for %d seconds (expires: %s)",
                         self._keep_alive_timeout,
                         time.ctime(self._session_expiration)
                     )
@@ -221,8 +240,11 @@ class CameManager:
                     self._devices = None
                 else:
                     raise ETIDomoError("Error in sl_client_id, can't get value.")
+                    
             except KeyError as ex:
                 raise ETIDomoError("Error in sl_client_id, can't find value.") from ex
+            finally:
+                self._login_in_progress = False
 
     async def keep_alive(self) -> None:
         """Send async keep-alive to maintain session."""
