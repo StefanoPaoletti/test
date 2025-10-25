@@ -6,9 +6,6 @@
   "documentation": "https://github.com/StefanoPaoletti/Came_Connect",
   "integration_type": "hub",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/StefanoPaoletti/Came_Connect/issues",
-  "requirements": [
-    "cryptography>=44.0.2"
-  ],
+  "requirements": ["cryptography>=41.0.0"],
   "version": "1.0.0"
 }
