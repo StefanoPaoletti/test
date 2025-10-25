@@ -1,6 +1,6 @@
-"""Support for CAME scenarios.
+"""Support for CAME scenarios - ASYNC VERSION.
 
-Versione ottimizzata da Stefano Paoletti
+Versione ottimizzata ASYNC da Stefano Paoletti
 For more details: https://github.com/StefanoPaoletti/Came_Connect
 """
 import asyncio
@@ -14,7 +14,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 
-from .pycame.came_manager import CameManager
+from .came_server import SecureCameManager
 from .const import DOMAIN, CONF_MANAGER
 
 _LOGGER = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up CAME scenario entities."""
-    manager = hass.data[DOMAIN][CONF_MANAGER]  # type: CameManager
+    manager = hass.data[DOMAIN][CONF_MANAGER]  # type: SecureCameManager
     
     # Initialize structure to track created scenario entities
     if "came_scenarios" not in hass.data[DOMAIN]:
@@ -63,23 +63,25 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         
         return entities
     
-    # Create initial entities
+    # Create initial entities - ASYNC!
     try:
-        scenarios = await hass.async_add_executor_job(manager.scenario_manager.get_scenarios)
+        # Use asyncio.to_thread for sync method
+        scenarios = await asyncio.to_thread(manager.scenario_manager.get_scenarios)
         _LOGGER.info("Initial scenario setup: loaded %d scenarios", len(scenarios))
         entities = create_new_entities(scenarios)
         async_add_entities(entities)
     except Exception as exc:
-        _LOGGER.error("Error loading initial scenarios: %s", exc)
+        _LOGGER.error("Error loading initial scenarios: %s", exc, exc_info=True)
         return
     
     # Function that listens to refresh event to add new entities dynamically
     async def handle_refresh_scenarios():
-        """Handle scenario refresh event."""
+        """Handle scenario refresh event - ASYNC."""
         _LOGGER.debug("Received came_scenarios_refreshed event, checking for new scenarios...")
         
         try:
-            scenarios = await hass.async_add_executor_job(manager.scenario_manager.get_scenarios)
+            # ASYNC call
+            scenarios = await asyncio.to_thread(manager.scenario_manager.get_scenarios)
             
             # Get existing and current IDs
             existing_ids = set(existing_scenario_entities.keys())
@@ -134,7 +136,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                         entity.async_write_ha_state()
         
         except Exception as exc:
-            _LOGGER.error("Error handling scenario refresh: %s", exc)
+            _LOGGER.error("Error handling scenario refresh: %s", exc, exc_info=True)
     
     # Register event listener
     async def _dispatcher_handler():
@@ -147,7 +149,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 class CameScenarioEntity(Scene):
     """Representation of a CAME scenario."""
     
-    def __init__(self, scenario, manager: CameManager):
+    def __init__(self, scenario, manager: SecureCameManager):
         """Initialize CAME scenario entity."""
         self._manager = manager
         self._scenario = scenario
@@ -162,12 +164,13 @@ class CameScenarioEntity(Scene):
         )
     
     async def async_activate(self, **kwargs):
-        """Activate the scenario."""
+        """Activate the scenario - ASYNC."""
         try:
             scenario_id = self._scenario["id"]
             _LOGGER.info("🎬 Activating scenario id=%s (%s)", scenario_id, self._attr_name)
             
-            await self.hass.async_add_executor_job(
+            # ASYNC call
+            await asyncio.to_thread(
                 self._manager.scenario_manager.activate_scenario,
                 scenario_id
             )
