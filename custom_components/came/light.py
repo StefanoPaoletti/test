@@ -1,6 +1,6 @@
-"""Support for the CAME lights (on/off, dimmable, RGB).
+"""Support for the CAME lights (on/off, dimmable, RGB) - ASYNC VERSION.
 
-Versione ottimizzata da Stefano Paoletti
+Versione ottimizzata ASYNC da Stefano Paoletti
 For more details: https://github.com/StefanoPaoletti/Came_Connect
 """
 import logging
@@ -14,7 +14,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .pycame.came_manager import CameManager
+from .came_server import SecureCameManager
 from .pycame.devices import CameDevice
 from .pycame.devices.came_light import LIGHT_STATE_ON
 
@@ -35,7 +35,7 @@ async def async_setup_entry(
             return
 
         _LOGGER.debug("Discovering %d new light(s)", len(dev_ids))
-        entities = await hass.async_add_executor_job(_setup_entities, hass, dev_ids)
+        entities = _setup_entities(hass, dev_ids)
         
         if entities:
             _LOGGER.info("Adding %d light entit(ies)", len(entities))
@@ -51,7 +51,7 @@ async def async_setup_entry(
 
 def _setup_entities(hass, dev_ids: List[str]):
     """Set up CAME light device."""
-    manager = hass.data[DOMAIN][CONF_MANAGER]  # type: CameManager
+    manager = hass.data[DOMAIN][CONF_MANAGER]  # type: SecureCameManager
     entities = []
     
     for dev_id in dev_ids:
@@ -70,17 +70,17 @@ def _setup_entities(hass, dev_ids: List[str]):
 
 
 class CameLightEntity(CameEntity, LightEntity):
-    """CAME light device entity."""
+    """CAME light device entity with full async support."""
 
     def __init__(self, device: CameDevice):
         """Init CAME light device entity."""
         super().__init__(device)
         self.entity_id = ENTITY_ID_FORMAT.format(self.unique_id)
         
-        # OTTIMIZZATO: Inizializza pending_brightness in __init__
+        # Pending brightness for smooth operation
         self._pending_brightness = None
 
-        # Determina le funzionalità supportate dal dispositivo
+        # Determine supported features
         support_brightness = getattr(self._device, 'support_brightness', False)
         support_color = getattr(self._device, 'support_color', False)
 
@@ -91,7 +91,7 @@ class CameLightEntity(CameEntity, LightEntity):
             support_color
         )
 
-        # Definisci i supported_color_modes (richiesto da HA moderno)
+        # Define supported_color_modes (required by modern HA)
         if support_color:
             self._attr_supported_color_modes = {"hs"}
         elif support_brightness:
@@ -113,11 +113,10 @@ class CameLightEntity(CameEntity, LightEntity):
     @property
     def brightness(self):
         """Return the brightness of the light (0-255)."""
-        # Verifica se il dispositivo supporta la luminosità
         if not hasattr(self._device, 'brightness') or not getattr(self._device, 'support_brightness', False):
             return None
         
-        # Converti da 0-100 (CAME) a 0-255 (Home Assistant)
+        # Convert from 0-100 (CAME) to 0-255 (Home Assistant)
         brightness_pct = self._device.brightness
         if brightness_pct is not None:
             return round(brightness_pct * 255 / 100)
@@ -126,7 +125,6 @@ class CameLightEntity(CameEntity, LightEntity):
     @property
     def hs_color(self):
         """Return the hs_color of the light."""
-        # Verifica se il dispositivo supporta il colore
         if not hasattr(self._device, 'hs_color') or not getattr(self._device, 'support_color', False):
             return None
         
@@ -145,77 +143,81 @@ class CameLightEntity(CameEntity, LightEntity):
         else:
             return "onoff"
 
-    def turn_on(self, **kwargs):
-        """Turn on or control the light."""
+    async def async_turn_on(self, **kwargs):
+        """Turn on or control the light - FULLY ASYNC."""
         try:
             _LOGGER.debug(
-                "💡 Turn on light %s - brightness: %s, hs_color: %s",
+                "⚡ ASYNC turn on light %s - brightness: %s, hs_color: %s",
                 self.entity_id,
                 kwargs.get(ATTR_BRIGHTNESS),
                 kwargs.get(ATTR_HS_COLOR)
             )
 
             brightness_pct = None
-            if ATTR_BRIGHTNESS in kwargs and hasattr(self._device, 'set_brightness'):
-                # Converti da 0-255 (HA) a 0-100 (CAME)
+            if ATTR_BRIGHTNESS in kwargs and hasattr(self._device, 'async_set_brightness'):
+                # Convert from 0-255 (HA) to 0-100 (CAME)
                 brightness_pct = round(kwargs[ATTR_BRIGHTNESS] * 100 / 255)
             
             hs_color = kwargs.get(ATTR_HS_COLOR)
 
-            # Gestione brightness con logica pending per dispositivi CAME
+            # Handle brightness with pending logic for CAME devices
             if self._device.state == LIGHT_STATE_ON:
-                # Luce già accesa → applica subito brightness e colore
+                # Light already on → apply brightness and color immediately
                 if brightness_pct is not None:
-                    self._device.set_brightness(brightness_pct)
+                    await self._device.async_set_brightness(brightness_pct)
                     _LOGGER.debug(
-                        "Light %s already ON, applying brightness %s%%",
+                        "Light %s already ON, applied brightness %s%%",
                         self.entity_id,
                         brightness_pct
                     )
                 
-                if hs_color is not None and hasattr(self._device, 'set_hs_color'):
-                    self._device.set_hs_color(hs_color)
+                if hs_color is not None and hasattr(self._device, 'async_set_hs_color'):
+                    await self._device.async_set_hs_color(hs_color)
                     _LOGGER.debug(
-                        "Light %s applying color HS: %s",
+                        "Light %s applied color HS: %s",
                         self.entity_id,
                         hs_color
                     )
             else:
-                # Luce spenta → prima accendi, poi applica brightness al prossimo update
+                # Light off → turn on first, apply brightness on next update
                 self._pending_brightness = brightness_pct
-                self._device.turn_on()
+                await self._device.async_turn_on()
                 _LOGGER.debug(
                     "Light %s turning ON, pending brightness: %s%%",
                     self.entity_id,
                     brightness_pct
                 )
 
-            # Aggiorna subito l'UI per reattività
-            self.schedule_update_ha_state()
+            # Update UI immediately for responsiveness
+            self.async_write_ha_state()
             
         except Exception as exc:
             _LOGGER.error("Error turning on light %s: %s", self.entity_id, exc)
 
-    def turn_off(self, **kwargs):
-        """Turn off the light."""
+    async def async_turn_off(self, **kwargs):
+        """Turn off the light - FULLY ASYNC."""
         try:
-            _LOGGER.debug("💡 Turn off light %s", self.entity_id)
-            self._pending_brightness = None  # Cancella pending
-            self._device.turn_off()
+            _LOGGER.debug("⚡ ASYNC turn off light %s", self.entity_id)
+            self._pending_brightness = None  # Cancel pending
+            await self._device.async_turn_off()
+            
+            # Update UI immediately
+            self.async_write_ha_state()
+            
         except Exception as exc:
             _LOGGER.error("Error turning off light %s: %s", self.entity_id, exc)
 
-    def update(self):
-        """Update the entity state and apply pending brightness if needed."""
+    async def async_update(self):
+        """Update the entity state and apply pending brightness if needed - ASYNC."""
         try:
-            # Se c'è un brightness pending e la luce è ora accesa, applicalo
+            # If there's pending brightness and light is now on, apply it
             if self._pending_brightness is not None and self._device.state == LIGHT_STATE_ON:
                 _LOGGER.debug(
                     "Light %s confirmed ON, applying pending brightness %s%%",
                     self.entity_id,
                     self._pending_brightness
                 )
-                self._device.set_brightness(self._pending_brightness)
+                await self._device.async_set_brightness(self._pending_brightness)
                 self._pending_brightness = None
         except Exception as exc:
             _LOGGER.error("Error updating light %s: %s", self.entity_id, exc)
