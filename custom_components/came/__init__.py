@@ -99,24 +99,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ASYNC listener task (replaces thread)
     async def _came_async_listener(hass: HomeAssistant, manager: SecureCameManager, stop_event: threading.Event):
         """Async task that listens for device status updates."""
-        _LOGGER.debug("Starting async listener task")
+        _LOGGER.warning("🎧 Starting async listener task - LISTENING FOR UPDATES")
         try:
             while not stop_event.is_set():
                 try:
-                    if await manager.status_update():
-                        _LOGGER.debug("Received devices status update")
+                    update_result = await manager.status_update()
+                    if update_result:
+                        _LOGGER.warning("🔄 STATUS UPDATE RECEIVED! Sending signal to all entities...")
                         async_dispatcher_send(hass, SIGNAL_UPDATE_ENTITY)
+                        _LOGGER.warning("📡 Signal SIGNAL_UPDATE_ENTITY sent to all entities")
                 except ETIDomoConnectionError:
-                    _LOGGER.debug("Server offline, will reconnect...")
-                    await asyncio.sleep(1)
+                    _LOGGER.warning("⚠️ Server offline, will reconnect...")
+                    await asyncio.sleep(2)
                 except Exception as exc:
-                    _LOGGER.error("Error in async listener: %s", exc)
-                    await asyncio.sleep(1)
+                    _LOGGER.error("❌ Error in async listener: %s", exc, exc_info=True)
+                    await asyncio.sleep(2)
                 
-                await asyncio.sleep(1)
+                # MODIFICATO: Da 1 a 2 secondi per ridurre carico
+                await asyncio.sleep(2)
                 
         except asyncio.CancelledError:
-            _LOGGER.debug("Async listener task cancelled")
+            _LOGGER.warning("🛑 Async listener task cancelled")
             raise
 
     # Initialize data storage
@@ -248,6 +251,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Service: Force update all entities
     async def async_force_update(call):
         """Force all devices to pull data."""
+        _LOGGER.warning("🔄 FORCE UPDATE service called - sending update signal")
         async_dispatcher_send(hass, SIGNAL_UPDATE_ENTITY)
 
     hass.services.async_register(DOMAIN, SERVICE_FORCE_UPDATE, async_force_update)
@@ -258,8 +262,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.debug("refresh_scenarios service called")
         scenario_manager = hass.data[DOMAIN]["came_scenario_manager"]
         
-        # Use asyncio.to_thread for sync method
-        await asyncio.to_thread(scenario_manager.refresh_scenarios)
+        # MODIFICATO: Chiamata async diretta invece di asyncio.to_thread
+        await scenario_manager.async_get_scenarios()
         
         _LOGGER.debug("refresh_scenarios completed, sending event")
         async_dispatcher_send(hass, "came_scenarios_refreshed")
@@ -271,7 +275,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Start all background tasks."""
         await asyncio.sleep(5)
         
-        _LOGGER.debug("Starting background tasks")
+        _LOGGER.warning("🚀 Starting background tasks (energy + keep-alive)")
         
         # Energy polling task
         hass.data[DOMAIN]["energy_polling_task"] = hass.async_create_task(
@@ -283,7 +287,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             async_keep_alive(hass, manager, stop_event)
         )
         
-        _LOGGER.info("✅ All background tasks started")
+        _LOGGER.warning("✅ All background tasks started successfully")
 
     hass.bus.async_listen_once("homeassistant_started", start_tasks)
     
