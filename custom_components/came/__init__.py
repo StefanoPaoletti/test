@@ -4,12 +4,12 @@ The CAME Integration Component - Optimized by Stefano Paoletti
 Based on original work by Den901
 For more details: https://github.com/StefanoPaoletti/Came_Connect
 
-Security Enhanced: Credentials are now encrypted in memory using Fernet encryption
+Security Enhanced: Credentials encrypted in memory using Fernet
+Performance Enhanced: Full async implementation with aiohttp
 """
 import asyncio
 import logging
 import threading
-from time import sleep
 from typing import List
 
 from homeassistant.components.climate import DOMAIN as CLIMATE
@@ -28,15 +28,14 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers.dispatcher import async_dispatcher_send, dispatcher_send
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .came_server import SecureCameManager  # ← MODIFICATO: era CameManager
+from .came_server import SecureCameManager
 from .pycame.devices import CameDevice
 from .pycame.exceptions import ETIDomoConnectionError, ETIDomoConnectionTimeoutError
 from .pycame.devices.base import TYPE_ENERGY_SENSOR
 
 from .const import (
-    CONF_CAME_LISTENER,
     CONF_ENTRY_IS_SETUP,
     CONF_MANAGER,
     CONF_PENDING,
@@ -64,7 +63,7 @@ CAME_TYPE_TO_HA = {
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up this integration using UI."""
+    """Set up this integration using UI with full async support."""
     # Print startup message
     if DOMAIN not in hass.data:
         _LOGGER.info(STARTUP_MESSAGE)
@@ -73,79 +72,92 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     config = entry.data.copy()
     config.update(entry.options)
 
-    # MODIFICATO: Usa SecureCameManager invece di CameManager
-    # Le credenziali vengono automaticamente cifrate in memoria
+    # Create SecureCameManager with encrypted credentials and async support
     manager = SecureCameManager(
         config.get(CONF_HOST),
         config.get(CONF_USERNAME, "admin"),
         config.get(CONF_PASSWORD, "admin"),
         hass=hass
     )
-    _LOGGER.debug("Secure CAME manager initialized with encrypted credentials")
+    _LOGGER.info("🔒 Secure CAME manager initialized (encrypted credentials + async)")
 
-    def initial_update():
-        manager.get_all_floors()
-        manager.get_all_rooms()
-        return manager.get_all_devices()
+    # ASYNC initial update - no executor needed!
+    async def initial_update():
+        await manager.get_all_floors()
+        await manager.get_all_rooms()
+        return await manager.get_all_devices()
 
     try:
-        devices = await hass.async_add_executor_job(initial_update)
+        devices = await initial_update()
+        _LOGGER.info("✅ Initial device discovery completed (%d devices)", len(devices) if devices else 0)
     except ETIDomoConnectionTimeoutError as exc:
         raise ConfigEntryNotReady from exc
 
-    # Crea evento di stop per thread e polling
+    # Create stop event for tasks
     stop_event = threading.Event()
 
-    def _came_update_listener(hass: HomeAssistant, manager: SecureCameManager, stop_event: threading.Event):
-        """Thread che ascolta gli aggiornamenti dei dispositivi in loop."""
-        while not stop_event.is_set():
-            try:
-                if manager.status_update():
-                    _LOGGER.debug("Received devices status update.")
-                    dispatcher_send(hass, SIGNAL_UPDATE_ENTITY)
-            except ETIDomoConnectionError:
-                _LOGGER.debug("Server goes offline. Reconnecting...")
-            except Exception as exc:
-                _LOGGER.error("Error in listener thread: %s", exc)
-            sleep(1)
-        _LOGGER.debug("Listener thread stopped")
+    # ASYNC listener task (replaces thread)
+    async def _came_async_listener(hass: HomeAssistant, manager: SecureCameManager, stop_event: threading.Event):
+        """Async task that listens for device status updates."""
+        _LOGGER.debug("Starting async listener task")
+        try:
+            while not stop_event.is_set():
+                try:
+                    if await manager.status_update():
+                        _LOGGER.debug("Received devices status update")
+                        async_dispatcher_send(hass, SIGNAL_UPDATE_ENTITY)
+                except ETIDomoConnectionError:
+                    _LOGGER.debug("Server offline, will reconnect...")
+                    await asyncio.sleep(1)
+                except Exception as exc:
+                    _LOGGER.error("Error in async listener: %s", exc)
+                    await asyncio.sleep(1)
+                
+                await asyncio.sleep(1)
+                
+        except asyncio.CancelledError:
+            _LOGGER.debug("Async listener task cancelled")
+            raise
 
-    thread = threading.Thread(
-        target=_came_update_listener, args=(hass, manager, stop_event), daemon=False
-    )
-
+    # Initialize data storage
     hass.data[DOMAIN] = {
         CONF_MANAGER: manager,
         CONF_ENTITIES: {},
         CONF_ENTRY_IS_SETUP: set(),
         CONF_PENDING: {},
-        CONF_CAME_LISTENER: thread,
         "stop_event": stop_event,
+        "listener_task": None,
         "energy_polling_task": None,
+        "keep_alive_task": None,
     }
 
     hass.data[DOMAIN]["came_scenario_manager"] = manager.scenario_manager
 
-    thread.start()
+    # Start async listener task
+    hass.data[DOMAIN]["listener_task"] = hass.async_create_task(
+        _came_async_listener(hass, manager, stop_event)
+    )
 
+    # ASYNC energy polling
     async def async_energy_polling(hass: HomeAssistant, manager: SecureCameManager, stop_event: threading.Event):
-        """Polling async per i dati energia."""
+        """Async polling for energy data."""
+        _LOGGER.debug("Starting async energy polling")
         try:
             while not stop_event.is_set():
                 try:
+                    # DIRECT ASYNC CALL - no executor!
                     response = await asyncio.wait_for(
-                        hass.async_add_executor_job(
-                            manager.application_request,
+                        manager.application_request(
                             {"cmd_name": "meters_list_req"},
                             "meters_list_resp",
                         ),
                         timeout=5.0
                     )
                 except asyncio.TimeoutError:
-                    _LOGGER.warning("Timeout durante richiesta dati energia")
+                    _LOGGER.warning("Timeout requesting energy data")
                     response = None
                 except Exception as exc:
-                    _LOGGER.warning("Errore durante richiesta dati energia: %s", exc)
+                    _LOGGER.warning("Error requesting energy data: %s", exc)
                     response = None
 
                 if response:
@@ -161,11 +173,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await asyncio.sleep(10)
                 
         except asyncio.CancelledError:
-            _LOGGER.debug("Polling energia cancellato")
+            _LOGGER.debug("Energy polling task cancelled")
             raise
         except Exception as e:
-            _LOGGER.error("Errore critico nel polling energia: %s", e)
+            _LOGGER.error("Critical error in energy polling: %s", e)
 
+    # NEW: ASYNC keep-alive task
+    async def async_keep_alive(hass: HomeAssistant, manager: SecureCameManager, stop_event: threading.Event):
+        """Keep session alive with periodic keep-alive requests."""
+        _LOGGER.debug("Starting async keep-alive task")
+        try:
+            while not stop_event.is_set():
+                await asyncio.sleep(600)  # Every 10 minutes
+                if not stop_event.is_set():
+                    try:
+                        await manager.keep_alive()
+                        _LOGGER.debug("Keep-alive sent successfully")
+                    except Exception as exc:
+                        _LOGGER.warning("Keep-alive error: %s", exc)
+        except asyncio.CancelledError:
+            _LOGGER.debug("Keep-alive task cancelled")
+            raise
+
+    # Load devices into Home Assistant platforms
     async def async_load_devices(devices: List[CameDevice]):
         """Load new devices."""
         dev_types = {}
@@ -178,7 +208,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 dev_types.setdefault(ha_type, [])
                 dev_types[ha_type].append(device.unique_id)
                 hass.data[DOMAIN][CONF_ENTITIES][device.unique_id] = None
+        
         _LOGGER.info("Detected device types for HA platforms: %s", list(dev_types.keys()))
+        
         for ha_type, dev_ids in dev_types.items():
             config_entries_key = f"{ha_type}.{DOMAIN}"
             if config_entries_key not in hass.data[DOMAIN][CONF_ENTRY_IS_SETUP]:
@@ -193,14 +225,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await async_load_devices(devices)
 
+    # Service: Update devices list
     async def async_update_devices(event_time):
-        """Pull new devices list from server."""
-        _LOGGER.debug("Update devices")
+        """Pull new devices list from server - ASYNC."""
+        _LOGGER.debug("Updating devices list")
 
-        devices = await hass.async_add_executor_job(manager.get_all_devices)
+        # DIRECT ASYNC CALL - no executor!
+        devices = await manager.get_all_devices()
         await async_load_devices(devices)
 
-        # Delete not exist device
+        # Delete devices that no longer exist
         newlist_ids = []
         for device in devices:
             newlist_ids.append(device.unique_id)
@@ -211,59 +245,72 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.services.async_register(DOMAIN, SERVICE_PULL_DEVICES, async_update_devices)
 
+    # Service: Force update all entities
     async def async_force_update(call):
         """Force all devices to pull data."""
         async_dispatcher_send(hass, SIGNAL_UPDATE_ENTITY)
 
     hass.services.async_register(DOMAIN, SERVICE_FORCE_UPDATE, async_force_update)
 
-    # Avvia polling energia async
-    async def start_energy_polling(_):
+    # Service: Refresh scenarios
+    async def async_refresh_scenarios_service(call):
+        """Refresh scenarios list - ASYNC."""
+        _LOGGER.debug("refresh_scenarios service called")
+        scenario_manager = hass.data[DOMAIN]["came_scenario_manager"]
+        
+        # Use asyncio.to_thread for sync method
+        await asyncio.to_thread(scenario_manager.refresh_scenarios)
+        
+        _LOGGER.debug("refresh_scenarios completed, sending event")
+        async_dispatcher_send(hass, "came_scenarios_refreshed")
+
+    hass.services.async_register(DOMAIN, "refresh_scenarios", async_refresh_scenarios_service)
+
+    # Start all async tasks when Home Assistant starts
+    async def start_tasks(_):
+        """Start all background tasks."""
         await asyncio.sleep(5)
+        
+        _LOGGER.debug("Starting background tasks")
+        
+        # Energy polling task
         hass.data[DOMAIN]["energy_polling_task"] = hass.async_create_task(
             async_energy_polling(hass, manager, stop_event)
         )
+        
+        # Keep-alive task (NEW!)
+        hass.data[DOMAIN]["keep_alive_task"] = hass.async_create_task(
+            async_keep_alive(hass, manager, stop_event)
+        )
+        
+        _LOGGER.info("✅ All background tasks started")
 
-    hass.bus.async_listen_once("homeassistant_started", start_energy_polling)
-    
-    async def async_refresh_scenarios_service(call):
-        _LOGGER.debug("refresh_scenarios service called")
-        scenario_manager = hass.data[DOMAIN]["came_scenario_manager"]
-        await hass.async_add_executor_job(scenario_manager.refresh_scenarios)
-        _LOGGER.debug("refresh_scenarios completed, sending event 'came_scenarios_refreshed'")
-        dispatcher_send(hass, "came_scenarios_refreshed")
-
-    hass.services.async_register(DOMAIN, "refresh_scenarios", async_refresh_scenarios_service)
+    hass.bus.async_listen_once("homeassistant_started", start_tasks)
     
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
-    """Unloading the CAME platforms - FIXED WITH TIMEOUT."""
+    """Unload the CAME integration - FULLY ASYNC."""
     _LOGGER.info("Starting CAME integration unload")
     
-    # Ferma il polling energia
-    energy_task = hass.data[DOMAIN].get("energy_polling_task")
-    if energy_task and not energy_task.done():
-        energy_task.cancel()
-        try:
-            await asyncio.wait_for(energy_task, timeout=2.0)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            _LOGGER.debug("Energy polling task cancelled")
+    # Cancel all async tasks
+    for task_name in ["energy_polling_task", "keep_alive_task", "listener_task"]:
+        task = hass.data[DOMAIN].get(task_name)
+        if task and not task.done():
+            _LOGGER.debug("Cancelling %s", task_name)
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=2.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                _LOGGER.debug("%s cancelled successfully", task_name)
     
-    # Ferma il listener thread
+    # Set stop event
     stop_event = hass.data[DOMAIN].get("stop_event")
     if stop_event:
         stop_event.set()
     
-    thread = hass.data[DOMAIN].get(CONF_CAME_LISTENER)
-    if thread and thread.is_alive():
-        # FIX CRITICO: Timeout di 5 secondi per evitare blocchi infiniti
-        thread.join(timeout=5.0)
-        if thread.is_alive():
-            _LOGGER.warning("Thread did not stop within timeout, forcing cleanup")
-    
-    # Unload platforms
+    # Unload all platforms
     unload_ok = all(
         await asyncio.gather(
             *[
@@ -276,20 +323,25 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     )
     
     if unload_ok:
-        # AGGIUNTO: Cleanup delle credenziali cifrate PRIMA di rimuovere i servizi
+        # Cleanup encrypted credentials and close session
         manager = hass.data[DOMAIN].get(CONF_MANAGER)
         if manager:
-            _LOGGER.debug("Securely clearing encrypted credentials from memory")
+            _LOGGER.debug("Securely clearing encrypted credentials and closing session")
             try:
                 manager.cleanup()
-                _LOGGER.info("Encrypted credentials cleared successfully")
+                await manager.close()  # Close aiohttp session
+                _LOGGER.info("✅ Credentials cleared and session closed")
             except Exception as exc:
-                _LOGGER.error("Error clearing credentials: %s", exc)
+                _LOGGER.error("Error during cleanup: %s", exc)
         
+        # Remove services
         hass.services.async_remove(DOMAIN, SERVICE_FORCE_UPDATE)
         hass.services.async_remove(DOMAIN, SERVICE_PULL_DEVICES)
         hass.services.async_remove(DOMAIN, "refresh_scenarios")
+        
+        # Remove data
         hass.data.pop(DOMAIN)
-        _LOGGER.info("CAME integration unloaded successfully")
+        
+        _LOGGER.info("✅ CAME integration unloaded successfully")
     
     return unload_ok
