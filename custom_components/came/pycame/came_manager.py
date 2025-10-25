@@ -67,6 +67,7 @@ class CameManager:
         self._devices = None
         self._lock = asyncio.Lock()  # Thread-safe operations
         self._login_in_progress = False  # Flag to prevent multiple logins
+        self._request_semaphore = asyncio.Semaphore(1)  # NUOVO: Max 1 richiesta alla volta
         self.scenario_manager = ScenarioManager(self)
 
     async def __aenter__(self):
@@ -270,33 +271,38 @@ class CameManager:
     async def application_request(
         self, command: dict, resp_command: str = "generic_reply"
     ) -> dict:
-        """Handle an async request to application layer of CAME ETI/Domo."""
-        await self.login()
+        """Handle an async request to application layer of CAME ETI/Domo.
+        
+        Uses semaphore to limit parallel requests and prevent 'Too many sessions' errors.
+        """
+        # MODIFICATO: Usa semaforo per limitare richieste parallele
+        async with self._request_semaphore:
+            await self.login()
 
-        if DEBUG_DEEP:
-            _LOGGER.debug("Sending async application layer API request: %s", command)
+            if DEBUG_DEEP:
+                _LOGGER.debug("Sending async application layer API request: %s", command)
 
-        cmd = command.copy()
+            cmd = command.copy()
 
-        try:
-            response = await self._request(
-                {
-                    "sl_cmd": "sl_data_req",
-                    "sl_client_id": self._client_id,
-                    "sl_appl_msg": cmd,
-                },
-            )
-        except ETIDomoConnectionError as err:
-            _LOGGER.debug("CAME server goes offline, resetting client_id")
-            self._client_id = None
-            raise err
+            try:
+                response = await self._request(
+                    {
+                        "sl_cmd": "sl_data_req",
+                        "sl_client_id": self._client_id,
+                        "sl_appl_msg": cmd,
+                    },
+                )
+            except ETIDomoConnectionError as err:
+                _LOGGER.debug("CAME server goes offline, resetting client_id")
+                self._client_id = None
+                raise err
 
-        if resp_command is not None and response.get("cmd_name") != resp_command:
-            raise ETIDomoError(
-                f"Invalid server response. Expected {resp_command!r}. Actual {response.get('cmd_name')!r}"
-            )
+            if resp_command is not None and response.get("cmd_name") != resp_command:
+                raise ETIDomoError(
+                    f"Invalid server response. Expected {resp_command!r}. Actual {response.get('cmd_name')!r}"
+                )
 
-        return response
+            return response
 
     async def _get_features(self) -> list:
         """Get list of available features from CAME device."""
