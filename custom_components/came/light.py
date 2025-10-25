@@ -18,7 +18,7 @@ from .came_server import SecureCameManager
 from .pycame.devices import CameDevice
 from .pycame.devices.came_light import LIGHT_STATE_ON
 
-from .const import CONF_MANAGER, CONF_PENDING, DOMAIN, SIGNAL_DISCOVERY_NEW
+from .const import CONF_MANAGER, CONF_PENDING, DOMAIN, SIGNAL_DISCOVERY_NEW, SIGNAL_UPDATE_ENTITY
 from .entity import CameEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -207,17 +207,38 @@ class CameLightEntity(CameEntity, LightEntity):
         except Exception as exc:
             _LOGGER.error("Error turning off light %s: %s", self.entity_id, exc)
 
-    async def async_update(self):
-        """Update the entity state and apply pending brightness if needed - ASYNC."""
-        try:
-            # If there's pending brightness and light is now on, apply it
-            if self._pending_brightness is not None and self._device.state == LIGHT_STATE_ON:
-                _LOGGER.debug(
-                    "Light %s confirmed ON, applying pending brightness %s%%",
-                    self.entity_id,
-                    self._pending_brightness
-                )
+    async def async_added_to_hass(self):
+        """Register update listener when entity is added to hass."""
+        await super().async_added_to_hass()
+        
+        # CRITICO: Ascolta il segnale SIGNAL_UPDATE_ENTITY
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                SIGNAL_UPDATE_ENTITY,
+                self._handle_coordinator_update
+            )
+        )
+        _LOGGER.debug("✅ Light %s registered update listener", self.entity_id)
+
+    async def _handle_coordinator_update(self):
+        """Handle update signal from coordinator."""
+        _LOGGER.debug("🔄 Light %s received update signal", self.entity_id)
+        
+        # Apply pending brightness if needed
+        if self._pending_brightness is not None and self._device.state == LIGHT_STATE_ON:
+            _LOGGER.debug(
+                "Light %s confirmed ON, applying pending brightness %s%%",
+                self.entity_id,
+                self._pending_brightness
+            )
+            try:
                 await self._device.async_set_brightness(self._pending_brightness)
+            except Exception as exc:
+                _LOGGER.error("Error applying pending brightness: %s", exc)
+            finally:
                 self._pending_brightness = None
-        except Exception as exc:
-            _LOGGER.error("Error updating light %s: %s", self.entity_id, exc)
+        
+        # Update state in UI
+        self.async_write_ha_state()
+        _LOGGER.debug("✅ Light %s state updated in UI", self.entity_id)
