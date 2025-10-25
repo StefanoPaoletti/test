@@ -5,6 +5,7 @@ encrypting credentials in memory to prevent plaintext storage.
 
 Author: Optimized by Stefano Paoletti
 """
+import asyncio
 import logging
 from typing import Optional
 
@@ -101,29 +102,43 @@ class SecureCameManager:
         self._cipher_suite = None
         _LOGGER.info("Credentials securely cleared from memory")
 
+    async def close(self):
+        """Close the underlying manager's aiohttp session.
+        
+        This should be called after cleanup() during unload.
+        """
+        if self._manager:
+            _LOGGER.debug("Closing CameManager session")
+            await self._manager.close()
+            _LOGGER.debug("CameManager session closed")
+
     # =========================================================================
     # Proxy all CameManager methods/properties
     # =========================================================================
 
-    def get_all_floors(self):
+    async def get_all_floors(self):
         """Get all floors from server."""
-        return self._manager.get_all_floors()
+        return await self._manager.get_all_floors()
 
-    def get_all_rooms(self):
+    async def get_all_rooms(self):
         """Get all rooms from server."""
-        return self._manager.get_all_rooms()
+        return await self._manager.get_all_rooms()
 
-    def get_all_devices(self):
+    async def get_all_devices(self):
         """Get all devices from server."""
-        return self._manager.get_all_devices()
+        return await self._manager.get_all_devices()
 
-    def status_update(self):
+    async def status_update(self, timeout=None):
         """Check for device status updates."""
-        return self._manager.status_update()
+        return await self._manager.status_update(timeout=timeout)
 
-    def application_request(self, *args, **kwargs):
+    async def application_request(self, *args, **kwargs):
         """Send application request to server."""
-        return self._manager.application_request(*args, **kwargs)
+        return await self._manager.application_request(*args, **kwargs)
+
+    async def keep_alive(self):
+        """Send keep-alive to server."""
+        return await self._manager.keep_alive()
 
     @property
     def scenario_manager(self):
@@ -134,6 +149,46 @@ class SecureCameManager:
     def _devices(self):
         """Get devices list."""
         return self._manager._devices
+
+    @property
+    def software_version(self):
+        """Get software version."""
+        return self._manager.software_version
+
+    @property
+    def serial(self):
+        """Get serial number."""
+        return self._manager.serial
+
+    @property
+    def keycode(self):
+        """Get keycode."""
+        return self._manager.keycode
+
+    @property
+    def connected(self):
+        """Check if connected."""
+        return self._manager.connected
+
+    def get_device_by_id(self, device_id: str):
+        """Get device by unique ID."""
+        return self._manager.get_device_by_id(device_id)
+
+    def get_device_by_act_id(self, act_id: int):
+        """Get device by act ID."""
+        return self._manager.get_device_by_act_id(act_id)
+
+    def get_device_by_name(self, name: str):
+        """Get device by name."""
+        return self._manager.get_device_by_name(name)
+
+    def get_devices_by_floor(self, floor_id: int):
+        """Get devices by floor ID."""
+        return self._manager.get_devices_by_floor(floor_id)
+
+    def get_devices_by_room(self, room_id: int):
+        """Get devices by room ID."""
+        return self._manager.get_devices_by_room(room_id)
 
     def __getattr__(self, name):
         """Forward any other attribute access to underlying manager.
